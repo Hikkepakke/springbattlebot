@@ -15,6 +15,19 @@ import db from "./src/db/db.js";
 import { log_events, logs, users } from "./src/db/schema.js";
 import { and, sql, eq, between, desc } from "drizzle-orm";
 
+// logging
+type LogLevel = "INFO" | "WARN" | "ERROR";
+
+function log(level: LogLevel, msg: string, meta?: Record<string, unknown>) {
+  const ts = new Date().toISOString();
+  const base = `[${ts}] [${level}] ${msg}`;
+  if (meta) {
+    console.log(base, JSON.stringify(meta));
+  } else {
+    console.log(base);
+  }
+}
+
 // types
 type Guild = "SIK" | "KIK";
 
@@ -426,12 +439,14 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
   bot.start(async (ctx: Context) => {
     if (ctx.message && ctx.message.chat.type == "private") {
       const user_id = Number(ctx.message.from.id);
+      log("INFO", "/start", { userId: user_id, from: ctx.message.from.first_name });
       const user = await getUser(user_id);
 
       const message_base =
-        "Hello there, welcome to the KIK-SIK Spring Battle!\n\nTo record kilometers for your guild send me a picture of your achievement, this can be for example a screenshot of your daily steps or a Strava log showing the exercise amount and route. After this I'll ask a few questions recarding the exercise.\n\nYou can also give the photo a caption in the format \"SPORT, DISTANCE\", and I will try to get the information from that. For Running/Walking either one is sufficient, and for Biking \"Cycling\" is also accepted. Just the first letter is also accepted. Letter case does not matter.\nFor example: \"running, 5.5\"\n\n You can check how many kilometers you have contributed with /personal. Additionally you can check the current status of the battle with /status. \n\nIf you have any questions about the battle you can ask in the main group and the organizers will answer you! If some technical problems appear with me, you can contact @JustusOjala.";
+        "Hello there, welcome to the KIK-SIK Spring Battle!\n\nTo record kilometers for your guild send me a picture of your achievement, this can be for example a screenshot of your daily steps or a Strava log showing the exercise amount and route. After this I'll ask a few questions recarding the exercise.\n\nYou can also give the photo a caption in the format \"SPORT, DISTANCE\", and I will try to get the information from that. For Running/Walking either one is sufficient, and for Biking \"Cycling\" is also accepted. Just the first letter is also accepted. Letter case does not matter.\nFor example: \"running, 5.5\"\n\n You can check how many kilometers you have contributed with /personal. Additionally you can check the current status of the battle with /status. \n\nIf you have any questions about the battle, please ask the organizers, they will answer you! If some technical problems appear with me, you can contact @AkkeIlveskero.";
 
       if (user[0] && user[0].guild) {
+        log("INFO", "Returning user", { userId: user_id, guild: user[0].guild });
         ctx.reply(
           message_base + `\n\nYou are competing with ${user[0].guild}.`
         );
@@ -440,6 +455,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
           ? `${ctx.message.from.first_name} ${ctx.message.from.last_name}`
           : ctx.message.from.first_name;
 
+        log("INFO", "New user registration", { userId: user_id, userName: user_name });
         await insertUser(user_id, user_name);
 
         ctx.reply(
@@ -458,6 +474,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
   bot.command("daily", async (ctx: Context) => {
     // TODO: add ability to choose the day range
     if (ctx.message && admins.list.includes(ctx.message.from.id)) {
+      log("INFO", "/daily (admin)", { userId: ctx.message.from.id });
       ctx.reply(
         "Please choose the day:",
         Markup.inlineKeyboard([
@@ -466,14 +483,17 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
         ])
       );
     }else if(ctx.message){
+      log("WARN", "/daily denied (not admin)", { userId: ctx.message.from.id });
       ctx.reply(`I'm sorry, ${ctx.message.from.first_name}. I'm afraid I can't do that.`)
     }
   });
 
   bot.command("all", async (ctx: Context) => {
     if (ctx.message && admins.list.includes(ctx.message.from.id)) {
+      log("INFO", "/all (admin)", { userId: ctx.message.from.id });
       await handleAll(ctx);
     }else if(ctx.message){
+      log("WARN", "/all denied (not admin)", { userId: ctx.message.from.id });
       ctx.reply(`I'm sorry, ${ctx.message.from.first_name}. I'm afraid I can't do that.`)
     }
   });
@@ -481,6 +501,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
   // group commands
   bot.command("status", async (ctx: Context) => {
     if(ctx.message && ctx.message.chat.type == "private"){
+      log("INFO", "/status", { userId: ctx.message.from.id });
       const stats = await getStats();
 
       let sik_wins = 0;
@@ -524,6 +545,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
   bot.command("personal", async (ctx: Context) => {
     if (ctx.message && ctx.message.chat.type == "private") {
       const user_id = Number(ctx.message.from.id);
+      log("INFO", "/personal", { userId: user_id });
 
       const my_stats = await getMyStats(user_id);
 
@@ -537,6 +559,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
 
   bot.command("reset_guild", (ctx: Context) => {
     if (ctx.message && ctx.message.chat.type === "private") {
+      log("INFO", "/reset_guild", { userId: ctx.message.from.id });
       ctx.reply(
         "Choose guild",
         Markup.inlineKeyboard([
@@ -554,9 +577,13 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
           ? `${ctx.message.from.first_name} ${ctx.message.from.last_name}`
           : ctx.message.from.first_name;
       if(user_id && user_name){
+        log("INFO", "/update_name", { userId: user_id, newName: user_name });
         updateName(user_id, user_name)
           .then(() => ctx.reply(`Your name was successfully updated to ${user_name}.`))
-          .catch(() => ctx.reply("Something went wrong while updating your name."))
+          .catch((e) => {
+            log("ERROR", "Failed to update name", { userId: user_id, error: String(e) });
+            ctx.reply("Something went wrong while updating your name.");
+          })
       }else{
         ctx.reply("Your id or name could not be determined.")
       }
@@ -566,6 +593,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
   bot.command("mydaily", async (ctx: Context) => {
     if (ctx.message && ctx.message.chat.type == "private") {
       const user_id = Number(ctx.message.from.id);
+      log("INFO", "/mydaily", { userId: user_id });
 
       const my_stats = await getMyDaily(user_id);
 
@@ -580,6 +608,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
   bot.command("cancel", (ctx: Context) => {
     if (ctx.has(message("text"))) {
       const user_id = Number(ctx.message.from.id);
+      log("INFO", "/cancel", { userId: user_id });
 
       deleteLogEvent(user_id);
 
@@ -589,19 +618,20 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
 
   // text handler
   bot.on(message("text"), async (ctx: Context) => {
-    // check the data for active log and
     if (ctx.has(message("text"))) {
       const user_id = Number(ctx.message.from.id);
 
       const log_event = await getLogEvent(user_id);
 
       if (log_event && log_event.sport !== null) {
-        try {
-          const text = ctx.message.text;
+        const text = ctx.message.text;
+        log("INFO", "Distance text received", { userId: user_id, sport: log_event.sport, input: text });
 
+        try {
           const distance = z.number().min(1).parse(Number(text));
 
           if(log_event.sport !== Sport.steps && distance > 1000){
+            log("WARN", "Distance > 1000 km, asking to confirm", { userId: user_id, sport: log_event.sport, distance });
             ctx.reply(
               "You inserted a distance exceeding 1000 km. Are you sure you did not intend to record steps?",
               Markup.inlineKeyboard([
@@ -618,6 +648,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
               log_event.sport as Sport,
               log_event.sport === Sport.steps ? distance * 0.0007 : distance
             );
+            log("INFO", "Logged via text input", { userId: user_id, sport: log_event.sport, distance });
 
             ctx.reply(`Recorded ${log_event.sport} with ${distance} ${log_event.sport === Sport.steps ? "steps" : "km"}`);
           }
@@ -627,13 +658,14 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
           ctx.reply("Thanks for participating!");
         } catch (e) {
           if (e instanceof postgres.PostgresError) {
-            console.log(e);
+            log("ERROR", "Database error during text logging", { userId: user_id, error: String(e) });
             ctx.reply(
               "Encountered an error with logging data please contact @JustusOjala"
             );
           }
 
           if (e instanceof ZodError) {
+            log("WARN", "Invalid distance input", { userId: user_id, input: text, sport: log_event.sport });
             ctx.reply(
               log_event.sport === Sport.steps
                 ? "Something went wrong with your input. Make sure you use whole numbers for steps. Please try again."
@@ -647,11 +679,14 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
 
   bot.on(message("photo"), async (ctx: Context) => {
     if (ctx.message && ctx.message.chat.type === "private") {
+      const user_id = Number(ctx.message.from.id);
+      log("INFO", "Photo received", { userId: user_id, hasCaption: !!(ctx.has(message("photo")) && ctx.message.caption) });
+
       if(process.env.ACCEPTING_SUBMISSIONS !== "true"){
+        log("WARN", "Submissions disabled, photo rejected", { userId: user_id });
         ctx.reply("Sorry, I am not currently accepting submissions.")
         return;
       }
-      const user_id = Number(ctx.message.from.id);
       const user = await getUser(user_id);
 
       if (user[0] && user[0].guild) {
@@ -662,6 +697,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
         
         if(ctx.has(message("photo")) && ctx.message.caption){ 
           const parts = ctx.message.caption.split(',').map((x) => x.trim().toLowerCase())
+          log("INFO", "Caption parsed", { userId: user_id, caption: ctx.message.caption, parts });
         
           if(parts.length == 2 && Number(parts[1])){
             const distance = z.number().min(1).parse(Number(parts[1]));
@@ -673,6 +709,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
               case "r":
               case "w":
                 if(distance > 1000){
+                  log("WARN", "Caption distance > 1000 km for Running/Walking", { userId: user_id, distance });
                   await ctx.reply("I parsed that as Running/Walking with more than 1000 km. That's probably wrong.");
                   askSport(ctx);
                 }else{
@@ -681,6 +718,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
                     Sport.running_walking,
                     distance
                   );
+                  log("INFO", "Logged via caption", { userId: user_id, sport: Sport.running_walking, distance });
       
                   ctx.reply(`Recorded Running/Walking with ${distance} km`);
                   await deleteLogEvent(user_id);
@@ -692,6 +730,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
               case "b":
               case "c":
                 if(distance > 1000){
+                  log("WARN", "Caption distance > 1000 km for Biking", { userId: user_id, distance });
                   await ctx.reply("I parsed that as Biking with more than 1000 km. That's probably wrong.");
                   askSport(ctx);
                 }else{
@@ -700,6 +739,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
                     Sport.biking,
                     distance
                   );
+                  log("INFO", "Logged via caption", { userId: user_id, sport: Sport.biking, distance });
       
                   ctx.reply(`Recorded Biking with ${distance} km`);
                   await deleteLogEvent(user_id);
@@ -715,24 +755,28 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
                   Sport.steps,
                   distance * 0.0007
                 );
+                log("INFO", "Logged via caption", { userId: user_id, sport: Sport.steps, steps: distance, distanceKm: distance * 0.0007 });
     
                 ctx.reply(`Recorded Steps with ${distance} steps`);
                 await deleteLogEvent(user_id);
                 ctx.reply("Thanks for participating!");
                 break;
               default:
+                log("WARN", "Caption sport not recognized", { userId: user_id, sportInput: parts[0] });
                 await ctx.reply("Seems you tried to include sport information with the photo, but I could not parse it. Sorry.");
                 askSport(ctx);
                 break;
             }
           }else{
+            log("INFO", "Caption not parseable, asking sport", { userId: user_id });
             askSport(ctx);
           }
         }else{
+          log("INFO", "No caption, asking sport", { userId: user_id });
           askSport(ctx);
         }
       } else {
-        console.log(`User id: ${user_id}. User: ${user}`);
+        log("WARN", "Photo from unregistered user", { userId: user_id });
         ctx.reply("Please register with /start before recording kilometers.");
       }
     }
@@ -807,10 +851,10 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
     }
   });
 
-  console.log("Starting bot");
+  log("INFO", "Starting bot");
 
   if (process.env.NODE_ENV === "production" && process.env.DOMAIN) {
-    console.log("Running webhook");
+    log("INFO", "Running in webhook mode", { domain: process.env.DOMAIN, port: 3000 });
 
     bot.launch({
       webhook: {
@@ -819,7 +863,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
       },
     });
   } else {
-    console.log("Running in long poll mode");
+    log("INFO", "Running in long poll mode");
 
     bot.launch();
   }
@@ -830,23 +874,39 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
   const cronId = process.env.CRON_GROUP_ID;
 
   if (cronId) {
-    cron.schedule(
-      process.env.NODE_ENV === "production" ? "0 1 * * *" : "* * * * *",
-      async () => {
-        const message = await getDailyMessage(-1);
+    const cronSchedule = process.env.NODE_ENV === "production" ? "0 1 * * *" : "* * * * *";
+    log("INFO", "Cron job scheduled", { schedule: cronSchedule, groupId: cronId });
 
-        bot.telegram.sendMessage(cronId, message);
+    cron.schedule(
+      cronSchedule,
+      async () => {
+        log("INFO", "Cron job triggered: sending daily summary");
+        try {
+          const message = await getDailyMessage(-1);
+          await bot.telegram.sendMessage(cronId, message);
+          log("INFO", "Cron daily summary sent", { groupId: cronId });
+        } catch (e) {
+          log("ERROR", "Cron daily summary failed", { error: String(e) });
+        }
       },
       {
         scheduled: true,
         timezone: "Europe/Helsinki",
       }
     );
+  } else {
+    log("INFO", "No CRON_GROUP_ID set, skipping cron job");
   }
 
   // Enable graceful stop
-  process.once("SIGINT", () => bot.stop("SIGINT"));
-  process.once("SIGTERM", () => bot.stop("SIGTERM"));
+  process.once("SIGINT", () => {
+    log("INFO", "Received SIGINT, shutting down");
+    bot.stop("SIGINT");
+  });
+  process.once("SIGTERM", () => {
+    log("INFO", "Received SIGTERM, shutting down");
+    bot.stop("SIGTERM");
+  });
 } else {
-  console.log("missing some environment variables...");
+  log("ERROR", "Missing required environment variables (BOT_TOKEN and/or ADMINS)");
 }
