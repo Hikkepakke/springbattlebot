@@ -28,6 +28,10 @@ function log(level: LogLevel, msg: string, meta?: Record<string, unknown>) {
   }
 }
 
+// PostgreSQL `real` (float4) max finite value
+const PG_REAL_MAX = 3.4028235e+38;
+const distanceSchema = z.number().min(1).max(PG_REAL_MAX);
+
 // types
 type Guild = "SIK" | "KIK";
 
@@ -628,7 +632,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
         log("INFO", "Distance text received", { userId: user_id, sport: log_event.sport, input: text });
 
         try {
-          const distance = z.number().min(1).parse(Number(text));
+          const distance = distanceSchema.parse(Number(text));
 
           if(log_event.sport !== Sport.steps && distance > 1000){
             log("WARN", "Distance > 1000 km, asking to confirm", { userId: user_id, sport: log_event.sport, distance });
@@ -666,10 +670,13 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
 
           if (e instanceof ZodError) {
             log("WARN", "Invalid distance input", { userId: user_id, input: text, sport: log_event.sport });
+            const tooLarge = Number(text) > PG_REAL_MAX;
             ctx.reply(
-              log_event.sport === Sport.steps
-                ? "Something went wrong with your input. Make sure you use whole numbers for steps. Please try again."
-                : "Something went wrong with your input. Make sure you use . as separator for kilometers and meters, also the minimum distance is 1km. Please try again."
+              tooLarge
+                ? "The number you entered is too large to store. Please enter a smaller value."
+                : log_event.sport === Sport.steps
+                  ? "Something went wrong with your input. Make sure you use whole numbers for steps. Please try again."
+                  : "Something went wrong with your input. Make sure you use . as separator for kilometers and meters, also the minimum distance is 1km. Please try again."
             );
           }
         }
@@ -700,7 +707,14 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
           log("INFO", "Caption parsed", { userId: user_id, caption: ctx.message.caption, parts });
         
           if(parts.length == 2 && Number(parts[1])){
-            const distance = z.number().min(1).parse(Number(parts[1]));
+            const captionParse = distanceSchema.safeParse(Number(parts[1]));
+
+            if (!captionParse.success) {
+              log("WARN", "Caption distance out of range", { userId: user_id, input: parts[1] });
+              await ctx.reply("The distance you entered is invalid (too small or too large). Please try again.");
+              askSport(ctx);
+            } else {
+            const distance = captionParse.data;
 
             switch(parts[0]){
               case "walking":
@@ -766,6 +780,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
                 await ctx.reply("Seems you tried to include sport information with the photo, but I could not parse it. Sorry.");
                 askSport(ctx);
                 break;
+            }
             }
           }else{
             log("INFO", "Caption not parseable, asking sport", { userId: user_id });
@@ -833,7 +848,15 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
           );
           break;
         case "sportFix":
-          const distance = z.number().min(1).parse(Number(dataSplit[2]));
+          const fixParse = distanceSchema.safeParse(Number(dataSplit[2]));
+
+          if (!fixParse.success) {
+            log("WARN", "sportFix distance out of range", { userId: user_id, input: dataSplit[2] });
+            ctx.reply("The distance value is too large to store. Please try logging again with a smaller number.");
+            break;
+          }
+
+          const distance = fixParse.data;
           const sport = logData as Sport;
   
           await insertLog(
@@ -841,6 +864,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
             sport,
             sport === Sport.steps ? distance * 0.0007 : distance
           );
+          log("INFO", "Logged via sportFix", { userId: user_id, sport, distance });
 
           ctx.reply(`Recorded ${sport} with ${distance} ${sport === Sport.steps ? "steps" : "km"}`);
           break;
