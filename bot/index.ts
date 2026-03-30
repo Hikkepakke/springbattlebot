@@ -28,9 +28,8 @@ function log(level: LogLevel, msg: string, meta?: Record<string, unknown>) {
   }
 }
 
-// PostgreSQL `real` (float4) max finite value
-const PG_REAL_MAX = 3.4028235e+38;
-const distanceSchema = z.number().min(1).max(PG_REAL_MAX);
+const MAX_DISTANCE = 1_000_000;
+const distanceSchema = z.number().min(1).max(MAX_DISTANCE);
 
 // types
 type Guild = "SIK" | "KIK";
@@ -670,7 +669,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
 
           if (e instanceof ZodError) {
             log("WARN", "Invalid distance input", { userId: user_id, input: text, sport: log_event.sport });
-            const tooLarge = Number(text) > PG_REAL_MAX;
+            const tooLarge = Number(text) > MAX_DISTANCE;
             ctx.reply(
               tooLarge
                 ? "The number you entered is too large to store. Please enter a smaller value."
