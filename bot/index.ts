@@ -28,6 +28,23 @@ function log(level: LogLevel, msg: string, meta?: Record<string, unknown>) {
   }
 }
 
+/** Telegram returns 400 when edit would not change the message (e.g. keyboard already removed, double tap). */
+function isTelegramMessageNotModifiedError(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const r = (e as { response?: { error_code?: number; description?: string } })
+    .response;
+  const d = r?.description ?? "";
+  return r?.error_code === 400 && d.includes("message is not modified");
+}
+
+async function clearInlineKeyboardIfAny(ctx: Context<Update>) {
+  try {
+    await ctx.editMessageReplyMarkup(undefined);
+  } catch (e) {
+    if (!isTelegramMessageNotModifiedError(e)) throw e;
+  }
+}
+
 const MAX_DISTANCE = 1_000_000;
 const distanceSchema = z.number().min(1).max(MAX_DISTANCE);
 
@@ -50,7 +67,7 @@ interface SportStatReturn {
 // connect to db
 const sql_pg = postgres(
   process.env.POSTGRES_URL ||
-    "postgresql://username:password@springbattlebot-db:5432/database"
+    "postgresql://username:password@springbattlebot-db:5432/database",
 );
 
 // database access functions
@@ -61,7 +78,7 @@ async function changeGuild(userId: number, guild: Guild) {
 }
 
 async function updateName(userId: number, name: string) {
-  await db.update(users).set({ userName:  name}).where(eq(users.id, userId));
+  await db.update(users).set({ userName: name }).where(eq(users.id, userId));
 }
 
 async function getStats() {
@@ -161,16 +178,14 @@ async function getMyStats(user_id: number) {
   });
 }
 
-async function getMyDaily(user_id: number, ) {
+async function getMyDaily(user_id: number) {
   const today = new Date(new Date().setHours(new Date().getHours() + 3));
 
   const start_date = new Date(
-    new Date(new Date().setDate(today.getDate())).toDateString()
+    new Date(new Date().setDate(today.getDate())).toDateString(),
   );
   const limit_date = new Date(
-    new Date(
-      new Date().setDate(today.getDate() + 1)
-    ).toDateString()
+    new Date(new Date().setDate(today.getDate() + 1)).toDateString(),
   );
 
   const stats = await db
@@ -182,8 +197,8 @@ async function getMyDaily(user_id: number, ) {
     .where(
       and(
         eq(logs.userId, user_id),
-        between(logs.createdAt, start_date, limit_date)
-      )
+        between(logs.createdAt, start_date, limit_date),
+      ),
     )
     .groupBy(logs.sport);
 
@@ -201,7 +216,7 @@ async function getTop(
   guild: Guild,
   limit: number,
   start_date?: Date,
-  limit_date?: Date
+  limit_date?: Date,
 ) {
   const topX = await db
     .select({
@@ -215,8 +230,8 @@ async function getTop(
         ? eq(logs.guild, guild)
         : and(
             eq(logs.guild, guild),
-            between(logs.createdAt, start_date, limit_date)
-          )
+            between(logs.createdAt, start_date, limit_date),
+          ),
     )
     .groupBy(users.userName, users.id)
     .orderBy(desc(sql<number>`sum(${logs.distance})`)) // TODO: can I get this from the select somehow?
@@ -294,11 +309,11 @@ async function askSport(ctx: Context) {
     Markup.inlineKeyboard([
       Markup.button.callback(
         Sport.running_walking,
-        `sport ${Sport.running_walking}`
+        `sport ${Sport.running_walking}`,
       ),
       Markup.button.callback(Sport.steps, `sport ${Sport.steps}`),
       Markup.button.callback(Sport.biking, `sport ${Sport.biking}`),
-    ])
+    ]),
   );
 }
 
@@ -307,12 +322,12 @@ async function getDailyMessage(day_modifier: number = 0) {
   const today = new Date(new Date().setHours(new Date().getHours() + 3));
 
   const start_date = new Date(
-    new Date(new Date().setDate(today.getDate() + day_modifier)).toDateString()
+    new Date(new Date().setDate(today.getDate() + day_modifier)).toDateString(),
   );
   const limit_date = new Date(
     new Date(
-      new Date().setDate(today.getDate() + day_modifier + 1)
-    ).toDateString()
+      new Date().setDate(today.getDate() + day_modifier + 1),
+    ).toDateString(),
   );
 
   start_date.setHours(start_date.getHours() + 3);
@@ -337,21 +352,21 @@ async function getDailyMessage(day_modifier: number = 0) {
     "KIK",
     dailyTopLength,
     start_date,
-    limit_date
+    limit_date,
   );
 
   const sikDailyTop = await getTop(
     "SIK",
     dailyTopLength,
     start_date,
-    limit_date
+    limit_date,
   );
 
   message += `\nKIK top ${dailyTopLength}\n`;
 
   for (const [index, user] of kikDailyTop.entries()) {
     message += `  ${index + 1}. ${user.userName}: ${user.totalDistance.toFixed(
-      1
+      1,
     )} km\n`;
   }
 
@@ -359,21 +374,21 @@ async function getDailyMessage(day_modifier: number = 0) {
 
   for (const [index, user] of sikDailyTop.entries()) {
     message += `  ${index + 1}. ${user.userName}: ${user.totalDistance.toFixed(
-      1
+      1,
     )} km\n`;
   }
 
   // Get all-time top and format
 
-  const kikTop = await getTop("KIK", 3)
+  const kikTop = await getTop("KIK", 3);
 
-  const sikTop = await getTop("SIK", 3)
+  const sikTop = await getTop("SIK", 3);
 
   message += `\nKIK all-time top 3\n`;
 
   for (const [index, user] of kikTop.entries()) {
     message += `  ${index + 1}. ${user.userName}: ${user.totalDistance.toFixed(
-      1
+      1,
     )} km\n`;
   }
 
@@ -381,7 +396,7 @@ async function getDailyMessage(day_modifier: number = 0) {
 
   for (const [index, user] of sikTop.entries()) {
     message += `  ${index + 1}. ${user.userName}: ${user.totalDistance.toFixed(
-      1
+      1,
     )} km\n`;
   }
 
@@ -415,20 +430,20 @@ async function handleAll(ctx: Context) {
       if (sport === Sport.running_walking) {
         message += "\n";
       }
-    })
+    }),
   );
 
   const kik_personals = await getTop("KIK", 5);
   const sik_personals = await getTop("SIK", 5);
 
   kik_personals.forEach(
-    (p, i) => (message += `${i + 1}. ${p.userName}: ${p.totalDistance} km\n`)
+    (p, i) => (message += `${i + 1}. ${p.userName}: ${p.totalDistance} km\n`),
   );
 
   message += "\n";
 
   sik_personals.forEach(
-    (p, i) => (message += `${i + 1}. ${p.userName}: ${p.totalDistance} km\n`)
+    (p, i) => (message += `${i + 1}. ${p.userName}: ${p.totalDistance} km\n`),
   );
 
   ctx.reply(message);
@@ -442,23 +457,32 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
   bot.start(async (ctx: Context) => {
     if (ctx.message && ctx.message.chat.type == "private") {
       const user_id = Number(ctx.message.from.id);
-      log("INFO", "/start", { userId: user_id, from: ctx.message.from.first_name });
+      log("INFO", "/start", {
+        userId: user_id,
+        from: ctx.message.from.first_name,
+      });
       const user = await getUser(user_id);
 
       const message_base =
-        "Hello there, welcome to the KIK-SIK Spring Battle!\n\nTo record kilometers for your guild send me a picture of your achievement, this can be for example a screenshot of your daily steps or a Strava log showing the exercise amount and route. After this I'll ask a few questions recarding the exercise.\n\nYou can also give the photo a caption in the format \"SPORT, DISTANCE\", and I will try to get the information from that. For Running/Walking either one is sufficient, and for Biking \"Cycling\" is also accepted. Just the first letter is also accepted. Letter case does not matter.\nFor example: \"running, 5.5\"\n\n You can check how many kilometers you have contributed with /personal. Additionally you can check the current status of the battle with /status. \n\nIf you have any questions about the battle, please ask the organizers, they will answer you! If some technical problems appear with me, you can contact @AkkeIlveskero.";
+        'Hello there, welcome to the KIK-SIK Spring Battle!\n\nTo record kilometers for your guild send me a picture of your achievement, this can be for example a screenshot of your daily steps or a Strava log showing the exercise amount and route. After this I\'ll ask a few questions recarding the exercise.\n\nYou can also give the photo a caption in the format "SPORT, DISTANCE", and I will try to get the information from that. For Running/Walking either one is sufficient, and for Biking "Cycling" is also accepted. Just the first letter is also accepted. Letter case does not matter.\nFor example: "running, 5.5"\n\n You can check how many kilometers you have contributed with /personal. Additionally you can check the current status of the battle with /status. \n\nIf you have any questions about the battle, please ask the organizers, they will answer you! If some technical problems appear with me, you can contact @AkkeIlveskero.';
 
       if (user[0] && user[0].guild) {
-        log("INFO", "Returning user", { userId: user_id, guild: user[0].guild });
+        log("INFO", "Returning user", {
+          userId: user_id,
+          guild: user[0].guild,
+        });
         ctx.reply(
-          message_base + `\n\nYou are competing with ${user[0].guild}.`
+          message_base + `\n\nYou are competing with ${user[0].guild}.`,
         );
       } else {
         const user_name = ctx.message.from.last_name
           ? `${ctx.message.from.first_name} ${ctx.message.from.last_name}`
           : ctx.message.from.first_name;
 
-        log("INFO", "New user registration", { userId: user_id, userName: user_name });
+        log("INFO", "New user registration", {
+          userId: user_id,
+          userName: user_name,
+        });
         await insertUser(user_id, user_name);
 
         ctx.reply(
@@ -467,7 +491,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
           Markup.inlineKeyboard([
             Markup.button.callback("SIK", "guild SIK"),
             Markup.button.callback("KIK", "guild KIK"),
-          ])
+          ]),
         );
       }
     }
@@ -483,11 +507,13 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
         Markup.inlineKeyboard([
           Markup.button.callback("Today", "daily 0"),
           Markup.button.callback("Yesterday", "daily -1"),
-        ])
+        ]),
       );
-    }else if(ctx.message){
+    } else if (ctx.message) {
       log("WARN", "/daily denied (not admin)", { userId: ctx.message.from.id });
-      ctx.reply(`I'm sorry, ${ctx.message.from.first_name}. I'm afraid I can't do that.`)
+      ctx.reply(
+        `I'm sorry, ${ctx.message.from.first_name}. I'm afraid I can't do that.`,
+      );
     }
   });
 
@@ -495,15 +521,17 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
     if (ctx.message && admins.list.includes(ctx.message.from.id)) {
       log("INFO", "/all (admin)", { userId: ctx.message.from.id });
       await handleAll(ctx);
-    }else if(ctx.message){
+    } else if (ctx.message) {
       log("WARN", "/all denied (not admin)", { userId: ctx.message.from.id });
-      ctx.reply(`I'm sorry, ${ctx.message.from.first_name}. I'm afraid I can't do that.`)
+      ctx.reply(
+        `I'm sorry, ${ctx.message.from.first_name}. I'm afraid I can't do that.`,
+      );
     }
   });
 
   // group commands
   bot.command("status", async (ctx: Context) => {
-    if(ctx.message && ctx.message.chat.type == "private"){
+    if (ctx.message && ctx.message.chat.type == "private") {
       log("INFO", "/status", { userId: ctx.message.from.id });
       const stats = await getStats();
 
@@ -523,10 +551,14 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
         }
 
         kik_stats += ` - ${s.sport}: ${s.kik_sum.toFixed(1)} km${
-          s.kik_sum > s.sik_sum ? " 🏆" : ` (-${(s.sik_sum - s.kik_sum).toFixed(1)} km)`
+          s.kik_sum > s.sik_sum
+            ? " 🏆"
+            : ` (-${(s.sik_sum - s.kik_sum).toFixed(1)} km)`
         }\n`;
         sik_stats += ` - ${s.sport}: ${s.sik_sum.toFixed(1)} km${
-          s.sik_sum > s.kik_sum ? " 🏆" : ` (-${(s.kik_sum - s.sik_sum).toFixed(1)} km)`
+          s.sik_sum > s.kik_sum
+            ? " 🏆"
+            : ` (-${(s.kik_sum - s.sik_sum).toFixed(1)} km)`
         }\n`;
       });
 
@@ -539,8 +571,8 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
       }
 
       ctx.reply(message + kik_stats + "\n" + sik_stats);
-    }else{
-      ctx.reply("I'm sorry, \"status\" only works in private now")
+    } else {
+      ctx.reply('I\'m sorry, "status" only works in private now');
     }
   });
 
@@ -568,7 +600,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
         Markup.inlineKeyboard([
           Markup.button.callback("SIK", "reset_guild SIK"),
           Markup.button.callback("KIK", "reset_guild KIK"),
-        ])
+        ]),
       );
     }
   });
@@ -577,18 +609,23 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
     if (ctx.message && ctx.message.chat.type === "private") {
       const user_id = Number(ctx.message.from.id);
       const user_name = ctx.message.from.last_name
-          ? `${ctx.message.from.first_name} ${ctx.message.from.last_name}`
-          : ctx.message.from.first_name;
-      if(user_id && user_name){
+        ? `${ctx.message.from.first_name} ${ctx.message.from.last_name}`
+        : ctx.message.from.first_name;
+      if (user_id && user_name) {
         log("INFO", "/update_name", { userId: user_id, newName: user_name });
         updateName(user_id, user_name)
-          .then(() => ctx.reply(`Your name was successfully updated to ${user_name}.`))
+          .then(() =>
+            ctx.reply(`Your name was successfully updated to ${user_name}.`),
+          )
           .catch((e) => {
-            log("ERROR", "Failed to update name", { userId: user_id, error: String(e) });
+            log("ERROR", "Failed to update name", {
+              userId: user_id,
+              error: String(e),
+            });
             ctx.reply("Something went wrong while updating your name.");
-          })
-      }else{
-        ctx.reply("Your id or name could not be determined.")
+          });
+      } else {
+        ctx.reply("Your id or name could not be determined.");
       }
     }
   });
@@ -628,32 +665,49 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
 
       if (log_event && log_event.sport !== null) {
         const text = ctx.message.text;
-        log("INFO", "Distance text received", { userId: user_id, sport: log_event.sport, input: text });
+        log("INFO", "Distance text received", {
+          userId: user_id,
+          sport: log_event.sport,
+          input: text,
+        });
 
         try {
           const distance = distanceSchema.parse(Number(text));
 
-          if(log_event.sport !== Sport.steps && distance > 1000){
-            log("WARN", "Distance > 1000 km, asking to confirm", { userId: user_id, sport: log_event.sport, distance });
+          if (log_event.sport !== Sport.steps && distance > 1000) {
+            log("WARN", "Distance > 1000 km, asking to confirm", {
+              userId: user_id,
+              sport: log_event.sport,
+              distance,
+            });
             ctx.reply(
               "You inserted a distance exceeding 1000 km. Are you sure you did not intend to record steps?",
               Markup.inlineKeyboard([
                 Markup.button.callback(
                   `Record as ${log_event.sport}`,
-                  `sportFix ${log_event.sport} ${distance}`
+                  `sportFix ${log_event.sport} ${distance}`,
                 ),
-                Markup.button.callback(`Record as ${Sport.steps}`, `sportFix ${Sport.steps} ${distance}`),
-              ])
+                Markup.button.callback(
+                  `Record as ${Sport.steps}`,
+                  `sportFix ${Sport.steps} ${distance}`,
+                ),
+              ]),
             );
-          }else{
+          } else {
             await insertLog(
               log_event.user_id,
               log_event.sport as Sport,
-              log_event.sport === Sport.steps ? distance * 0.0007 : distance
+              log_event.sport === Sport.steps ? distance * 0.0007 : distance,
             );
-            log("INFO", "Logged via text input", { userId: user_id, sport: log_event.sport, distance });
+            log("INFO", "Logged via text input", {
+              userId: user_id,
+              sport: log_event.sport,
+              distance,
+            });
 
-            ctx.reply(`Recorded ${log_event.sport} with ${distance} ${log_event.sport === Sport.steps ? "steps" : "km"}`);
+            ctx.reply(
+              `Recorded ${log_event.sport} with ${distance} ${log_event.sport === Sport.steps ? "steps" : "km"}`,
+            );
           }
 
           await deleteLogEvent(log_event.user_id);
@@ -661,21 +715,28 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
           ctx.reply("Thanks for participating!");
         } catch (e) {
           if (e instanceof postgres.PostgresError) {
-            log("ERROR", "Database error during text logging", { userId: user_id, error: String(e) });
+            log("ERROR", "Database error during text logging", {
+              userId: user_id,
+              error: String(e),
+            });
             ctx.reply(
-              "Encountered an error with logging data please contact @JustusOjala"
+              "Encountered an error with logging data please contact @JustusOjala",
             );
           }
 
           if (e instanceof ZodError) {
-            log("WARN", "Invalid distance input", { userId: user_id, input: text, sport: log_event.sport });
+            log("WARN", "Invalid distance input", {
+              userId: user_id,
+              input: text,
+              sport: log_event.sport,
+            });
             const tooLarge = Number(text) > MAX_DISTANCE;
             ctx.reply(
               tooLarge
                 ? "The number you entered is too large to store. Please enter a smaller value."
                 : log_event.sport === Sport.steps
                   ? "Something went wrong with your input. Make sure you use whole numbers for steps. Please try again."
-                  : "Something went wrong with your input. Make sure you use . as separator for kilometers and meters, also the minimum distance is 1km. Please try again."
+                  : "Something went wrong with your input. Make sure you use . as separator for kilometers and meters, also the minimum distance is 1km. Please try again.",
             );
           }
         }
@@ -686,11 +747,16 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
   bot.on(message("photo"), async (ctx: Context) => {
     if (ctx.message && ctx.message.chat.type === "private") {
       const user_id = Number(ctx.message.from.id);
-      log("INFO", "Photo received", { userId: user_id, hasCaption: !!(ctx.has(message("photo")) && ctx.message.caption) });
+      log("INFO", "Photo received", {
+        userId: user_id,
+        hasCaption: !!(ctx.has(message("photo")) && ctx.message.caption),
+      });
 
-      if(process.env.ACCEPTING_SUBMISSIONS !== "true"){
-        log("WARN", "Submissions disabled, photo rejected", { userId: user_id });
-        ctx.reply("Sorry, I am not currently accepting submissions.")
+      if (process.env.ACCEPTING_SUBMISSIONS !== "true") {
+        log("WARN", "Submissions disabled, photo rejected", {
+          userId: user_id,
+        });
+        ctx.reply("Sorry, I am not currently accepting submissions.");
         return;
       }
       const user = await getUser(user_id);
@@ -700,92 +766,122 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
 
         // TODO: upload photo somwhere and set reference,
         // alternatively can we fetch photos from some chat?
-        
-        if(ctx.has(message("photo")) && ctx.message.caption){ 
-          const parts = ctx.message.caption.split(',').map((x) => x.trim().toLowerCase())
-          log("INFO", "Caption parsed", { userId: user_id, caption: ctx.message.caption, parts });
-        
-          if(parts.length == 2 && Number(parts[1])){
+
+        if (ctx.has(message("photo")) && ctx.message.caption) {
+          const parts = ctx.message.caption
+            .split(",")
+            .map((x) => x.trim().toLowerCase());
+          log("INFO", "Caption parsed", {
+            userId: user_id,
+            caption: ctx.message.caption,
+            parts,
+          });
+
+          if (parts.length == 2 && Number(parts[1])) {
             const captionParse = distanceSchema.safeParse(Number(parts[1]));
 
             if (!captionParse.success) {
-              log("WARN", "Caption distance out of range", { userId: user_id, input: parts[1] });
-              await ctx.reply("The distance you entered is invalid (too small or too large). Please try again.");
+              log("WARN", "Caption distance out of range", {
+                userId: user_id,
+                input: parts[1],
+              });
+              await ctx.reply(
+                "The distance you entered is invalid (too small or too large). Please try again.",
+              );
               askSport(ctx);
             } else {
-            const distance = captionParse.data;
+              const distance = captionParse.data;
 
-            switch(parts[0]){
-              case "walking":
-              case "running":
-              case "running/walking":
-              case "r":
-              case "w":
-                if(distance > 1000){
-                  log("WARN", "Caption distance > 1000 km for Running/Walking", { userId: user_id, distance });
-                  await ctx.reply("I parsed that as Running/Walking with more than 1000 km. That's probably wrong.");
-                  askSport(ctx);
-                }else{
-                  await insertLog(
-                    user_id,
-                    Sport.running_walking,
-                    distance
-                  );
-                  log("INFO", "Logged via caption", { userId: user_id, sport: Sport.running_walking, distance });
-      
-                  ctx.reply(`Recorded Running/Walking with ${distance} km`);
+              switch (parts[0]) {
+                case "walking":
+                case "running":
+                case "running/walking":
+                case "r":
+                case "w":
+                  if (distance > 1000) {
+                    log(
+                      "WARN",
+                      "Caption distance > 1000 km for Running/Walking",
+                      { userId: user_id, distance },
+                    );
+                    await ctx.reply(
+                      "I parsed that as Running/Walking with more than 1000 km. That's probably wrong.",
+                    );
+                    askSport(ctx);
+                  } else {
+                    await insertLog(user_id, Sport.running_walking, distance);
+                    log("INFO", "Logged via caption", {
+                      userId: user_id,
+                      sport: Sport.running_walking,
+                      distance,
+                    });
+
+                    ctx.reply(`Recorded Running/Walking with ${distance} km`);
+                    await deleteLogEvent(user_id);
+                    ctx.reply("Thanks for participating!");
+                  }
+                  break;
+                case "biking":
+                case "cycling":
+                case "b":
+                case "c":
+                  if (distance > 1000) {
+                    log("WARN", "Caption distance > 1000 km for Biking", {
+                      userId: user_id,
+                      distance,
+                    });
+                    await ctx.reply(
+                      "I parsed that as Biking with more than 1000 km. That's probably wrong.",
+                    );
+                    askSport(ctx);
+                  } else {
+                    await insertLog(user_id, Sport.biking, distance);
+                    log("INFO", "Logged via caption", {
+                      userId: user_id,
+                      sport: Sport.biking,
+                      distance,
+                    });
+
+                    ctx.reply(`Recorded Biking with ${distance} km`);
+                    await deleteLogEvent(user_id);
+                    ctx.reply("Thanks for participating!");
+                  }
+                  break;
+                case "activity":
+                case "steps":
+                case "a":
+                case "s":
+                  await insertLog(user_id, Sport.steps, distance * 0.0007);
+                  log("INFO", "Logged via caption", {
+                    userId: user_id,
+                    sport: Sport.steps,
+                    steps: distance,
+                    distanceKm: distance * 0.0007,
+                  });
+
+                  ctx.reply(`Recorded Steps with ${distance} steps`);
                   await deleteLogEvent(user_id);
                   ctx.reply("Thanks for participating!");
-                }
-                break;
-              case "biking":
-              case "cycling":
-              case "b":
-              case "c":
-                if(distance > 1000){
-                  log("WARN", "Caption distance > 1000 km for Biking", { userId: user_id, distance });
-                  await ctx.reply("I parsed that as Biking with more than 1000 km. That's probably wrong.");
-                  askSport(ctx);
-                }else{
-                  await insertLog(
-                    user_id,
-                    Sport.biking,
-                    distance
+                  break;
+                default:
+                  log("WARN", "Caption sport not recognized", {
+                    userId: user_id,
+                    sportInput: parts[0],
+                  });
+                  await ctx.reply(
+                    "Seems you tried to include sport information with the photo, but I could not parse it. Sorry.",
                   );
-                  log("INFO", "Logged via caption", { userId: user_id, sport: Sport.biking, distance });
-      
-                  ctx.reply(`Recorded Biking with ${distance} km`);
-                  await deleteLogEvent(user_id);
-                  ctx.reply("Thanks for participating!");
-                }
-                break;
-              case "activity":
-              case "steps":
-              case "a":
-              case "s":
-                await insertLog(
-                  user_id,
-                  Sport.steps,
-                  distance * 0.0007
-                );
-                log("INFO", "Logged via caption", { userId: user_id, sport: Sport.steps, steps: distance, distanceKm: distance * 0.0007 });
-    
-                ctx.reply(`Recorded Steps with ${distance} steps`);
-                await deleteLogEvent(user_id);
-                ctx.reply("Thanks for participating!");
-                break;
-              default:
-                log("WARN", "Caption sport not recognized", { userId: user_id, sportInput: parts[0] });
-                await ctx.reply("Seems you tried to include sport information with the photo, but I could not parse it. Sorry.");
-                askSport(ctx);
-                break;
+                  askSport(ctx);
+                  break;
+              }
             }
-            }
-          }else{
-            log("INFO", "Caption not parseable, asking sport", { userId: user_id });
+          } else {
+            log("INFO", "Caption not parseable, asking sport", {
+              userId: user_id,
+            });
             askSport(ctx);
           }
-        }else{
+        } else {
           log("INFO", "No caption, asking sport", { userId: user_id });
           askSport(ctx);
         }
@@ -800,7 +896,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
   bot.on("callback_query", async (ctx: Context<Update>) => {
     // answer callback
     await ctx.answerCbQuery();
-    await ctx.editMessageReplyMarkup(undefined);
+    await clearInlineKeyboardIfAny(ctx);
 
     if (ctx.has(callbackQuery("data"))) {
       const user_id = Number(ctx.callbackQuery.from.id);
@@ -824,7 +920,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
           await setUserGuild(user_id, logData as Guild);
 
           ctx.reply(
-            `Thanks! You chose ${logData} as your guild.\n\nTo start logging kilometers just send me a picture of your accomplishment!`
+            `Thanks! You chose ${logData} as your guild.\n\nTo start logging kilometers just send me a picture of your accomplishment!`,
           );
           break;
         case "reset_guild":
@@ -843,29 +939,40 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
           ctx.reply(
             logData === Sport.steps
               ? "Type the number of steps that you have walked. These are converted to kilometers automatically"
-              : "Type the number of kilometers using '.' as a separator, for example: 5.5"
+              : "Type the number of kilometers using '.' as a separator, for example: 5.5",
           );
           break;
         case "sportFix":
           const fixParse = distanceSchema.safeParse(Number(dataSplit[2]));
 
           if (!fixParse.success) {
-            log("WARN", "sportFix distance out of range", { userId: user_id, input: dataSplit[2] });
-            ctx.reply("The distance value is too large to store. Please try logging again with a smaller number.");
+            log("WARN", "sportFix distance out of range", {
+              userId: user_id,
+              input: dataSplit[2],
+            });
+            ctx.reply(
+              "The distance value is too large to store. Please try logging again with a smaller number.",
+            );
             break;
           }
 
           const distance = fixParse.data;
           const sport = logData as Sport;
-  
+
           await insertLog(
             user_id,
             sport,
-            sport === Sport.steps ? distance * 0.0007 : distance
+            sport === Sport.steps ? distance * 0.0007 : distance,
           );
-          log("INFO", "Logged via sportFix", { userId: user_id, sport, distance });
+          log("INFO", "Logged via sportFix", {
+            userId: user_id,
+            sport,
+            distance,
+          });
 
-          ctx.reply(`Recorded ${sport} with ${distance} ${sport === Sport.steps ? "steps" : "km"}`);
+          ctx.reply(
+            `Recorded ${sport} with ${distance} ${sport === Sport.steps ? "steps" : "km"}`,
+          );
           break;
         case "daily":
           await handleDaily(ctx, Number(logData));
@@ -877,7 +984,10 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
   log("INFO", "Starting bot");
 
   if (process.env.NODE_ENV === "production" && process.env.DOMAIN) {
-    log("INFO", "Running in webhook mode", { domain: process.env.DOMAIN, port: 3000 });
+    log("INFO", "Running in webhook mode", {
+      domain: process.env.DOMAIN,
+      port: 3000,
+    });
 
     bot.launch({
       webhook: {
@@ -897,8 +1007,12 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
   const cronId = process.env.CRON_GROUP_ID;
 
   if (cronId) {
-    const cronSchedule = process.env.NODE_ENV === "production" ? "0 1 * * *" : "* * * * *";
-    log("INFO", "Cron job scheduled", { schedule: cronSchedule, groupId: cronId });
+    const cronSchedule =
+      process.env.NODE_ENV === "production" ? "0 1 * * *" : "* * * * *";
+    log("INFO", "Cron job scheduled", {
+      schedule: cronSchedule,
+      groupId: cronId,
+    });
 
     cron.schedule(
       cronSchedule,
@@ -915,7 +1029,7 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
       {
         scheduled: true,
         timezone: "Europe/Helsinki",
-      }
+      },
     );
   } else {
     log("INFO", "No CRON_GROUP_ID set, skipping cron job");
@@ -931,5 +1045,8 @@ if (process.env.BOT_TOKEN && process.env.ADMINS) {
     bot.stop("SIGTERM");
   });
 } else {
-  log("ERROR", "Missing required environment variables (BOT_TOKEN and/or ADMINS)");
+  log(
+    "ERROR",
+    "Missing required environment variables (BOT_TOKEN and/or ADMINS)",
+  );
 }
